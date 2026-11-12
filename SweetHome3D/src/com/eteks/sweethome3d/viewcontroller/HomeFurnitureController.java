@@ -594,18 +594,17 @@ public class HomeFurnitureController implements Controller {
    * The implementation of this method always returns <code>true</code> except for <code>DESCRIPTION</code> and <code>PRICE</code> properties. 
    */
   public boolean isPropertyEditable(Property property) {
-    switch (property) {
-      case DESCRIPTION :
-      case PRICE :
-        return false;
-      case LIGHT_POWER :
-        return isLightPowerEditable();
-      case VISIBLE :
-        return this.visibleEditable;
-      default :
-        return true;
-    }
+  switch (property) {
+    case PRICE :
+      return false;
+    case LIGHT_POWER :
+      return isLightPowerEditable();
+    case VISIBLE :
+      return this.visibleEditable;
+    default :
+      return true;
   }
+}
   
   /**
    * Sets the edited icon.
