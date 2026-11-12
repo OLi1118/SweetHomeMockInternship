@@ -727,10 +727,18 @@ public class FurnitureTable extends JTable implements View, Printable {
    * Prints this component to make it fill <code>pageFormat</code> imageable size.
    */
   public int print(Graphics g, PageFormat pageFormat, int pageIndex) throws PrinterException {
+    if (!EventQueue.isDispatchThread()) {
+      return printOnEventDispatchThread(g, pageFormat, pageIndex);
+    }
     // Create a printable column model from the column model of this table 
     // with printable renderers for each column
     DefaultTableColumnModel printableColumnModel = new DefaultTableColumnModel();
-    TableColumnModel columnModel = getColumnModel();
+    FurnitureTableColumnModel columnModel = (FurnitureTableColumnModel)getColumnModel();
+    List<TableColumn> columns = Collections.list(columnModel.getColumns());
+    TableColumn levelColumn = columnModel.availableColumns.get(HomePieceOfFurniture.SortableProperty.LEVEL);
+    if (!columns.contains(levelColumn)) {
+      columns.add(levelColumn);
+    }
     final DefaultTableCellRenderer defaultRenderer = new DefaultTableCellRenderer();
     defaultRenderer.setHorizontalAlignment(DefaultTableCellRenderer.CENTER);
     TableCellRenderer printableHeaderRenderer = new TableCellRenderer() {
@@ -750,8 +758,7 @@ public class FurnitureTable extends JTable implements View, Printable {
           return headerRendererLabel;
         }
       };
-    for (int columnIndex = 0, n = columnModel.getColumnCount(); columnIndex < n; columnIndex++) {
-      final TableColumn tableColumn = columnModel.getColumn(columnIndex);
+    for (final TableColumn tableColumn : columns) {
       // Create a printable column from existing table column
       TableColumn printableColumn = new TableColumn();
       printableColumn.setIdentifier(tableColumn.getIdentifier());
@@ -779,71 +786,59 @@ public class FurnitureTable extends JTable implements View, Printable {
       printableColumn.setHeaderRenderer(printableHeaderRenderer);
       printableColumnModel.addColumn(printableColumn);
     }    
-    return print(g, pageFormat, pageIndex, printableColumnModel, Color.BLACK);
+    Color oldGridColor = getGridColor();
+    try {
+      setColumnModel(printableColumnModel);
+      // Add 3 pixels to columns on Windows to get a correct rendering
+      updateTableColumnsWidth(OperatingSystem.isWindows() ? 3 : 0);
+      setGridColor(Color.BLACK);
+      return getPrintable(PrintMode.FIT_WIDTH, null, null).print(g, pageFormat, pageIndex);
+    } finally {
+      setColumnModel(columnModel);
+      setGridColor(oldGridColor);
+    }
   }
 
   /**
-   * Prints this table in Event Dispatch Thread.
-  */
-  private int print(final Graphics g, 
-                    final PageFormat pageFormat, 
-                    final int pageIndex, 
-                    final TableColumnModel printableColumnModel,
-                    final Color gridColor) throws PrinterException {
-    if (EventQueue.isDispatchThread()) {
-      TableColumnModel oldColumnModel = getColumnModel();
-      Color oldGridColor = getGridColor();
-      setColumnModel(printableColumnModel);   
-      if (OperatingSystem.isWindows()) {
-        // Add 3 pixels to columns to get a correct rendering
-        updateTableColumnsWidth(3);
-      } else {
-        updateTableColumnsWidth(0);
-      }
-      setGridColor(gridColor);
-      Printable printable = getPrintable(PrintMode.FIT_WIDTH, null, null);
-      int pageExists = printable.print(g, pageFormat, pageIndex);
-      // Restore column model and grid color to their previous values
-      setColumnModel(oldColumnModel);
-      setGridColor(oldGridColor);
-      return pageExists;
-    } else {
-      // Print synchronously table in Event Dispatch Thread
-      // The best solution should be to be able to print out of Event Dispatch Thread
-      // a new instance of JTable customized with printableColumnModel and gridColor,
-      // but Swing refuses to print a JTable that isn't attached to a visible frame
-      class RunnableContext {
-        int pageExists;
-        PrinterException exception;
-      }
-      
-      final RunnableContext context = new RunnableContext();
-      try {
-        EventQueue.invokeAndWait(new Runnable() {
-            public void run() {
-              try {
-                context.pageExists = print(g, pageFormat, pageIndex, printableColumnModel, gridColor);
-              } catch (PrinterException ex) {
-                context.exception = ex;
-              }
+   * Prints the table on the event dispatch thread.
+   */
+  private int printOnEventDispatchThread(final Graphics g, final PageFormat pageFormat,
+                                         final int pageIndex) throws PrinterException {
+    // Print synchronously table in Event Dispatch Thread
+    // The best solution should be to be able to print out of Event Dispatch Thread
+    // a new instance of JTable customized with printableColumnModel and gridColor,
+    // but Swing refuses to print a JTable that isn't attached to a visible frame
+    class RunnableContext {
+      int pageExists;
+      PrinterException exception;
+    }
+
+    final RunnableContext context = new RunnableContext();
+    try {
+      EventQueue.invokeAndWait(new Runnable() {
+          public void run() {
+            try {
+              context.pageExists = print(g, pageFormat, pageIndex);
+            } catch (PrinterException ex) {
+              context.exception = ex;
             }
-          });
-        if (context.exception != null) {
-          throw context.exception;
-        }
-        return context.pageExists;
-      } catch (InterruptedException ex) {
-        throw new InterruptedPrinterException("Print interrupted");
-      } catch (InvocationTargetException ex) {
-        if (ex.getCause() instanceof RuntimeException) {
-          throw (RuntimeException)ex.getCause();
-        } else {
-          throw (Error)ex.getCause();
-        }
+          }
+        });
+      if (context.exception != null) {
+        throw context.exception;
+      }
+      return context.pageExists;
+    } catch (InterruptedException ex) {
+      throw new InterruptedPrinterException("Print interrupted");
+    } catch (InvocationTargetException ex) {
+      if (ex.getCause() instanceof RuntimeException) {
+        throw (RuntimeException)ex.getCause();
+      } else {
+        throw (Error)ex.getCause();
       }
     }
   }
-  
+
   /**
    * Writes in the given stream the content of the table at CSV format.
    */
@@ -920,6 +915,9 @@ public class FurnitureTable extends JTable implements View, Printable {
             break;
           case HEIGHT : 
             writer.write(sizeFormat.format(copiedPiece.getHeight()));
+            break;
+          case VOLUME :
+            writer.write(sizeFormat.format(copiedPiece.getVolume()));
             break;
           case X : 
             writer.write(sizeFormat.format(copiedPiece.getX()));
@@ -1130,6 +1128,8 @@ public class FurnitureTable extends JTable implements View, Printable {
           return preferences.getLocalizedString(FurnitureTable.class, "depthColumn");
         case HEIGHT : 
           return preferences.getLocalizedString(FurnitureTable.class, "heightColumn");
+        case VOLUME :
+          return preferences.getLocalizedString(FurnitureTable.class, "volumeColumn");
         case X : 
           return preferences.getLocalizedString(FurnitureTable.class, "xColumn");
         case Y :
@@ -1173,11 +1173,13 @@ public class FurnitureTable extends JTable implements View, Printable {
           return 120; 
         case WIDTH :
         case DEPTH :
-        case HEIGHT : 
+        case HEIGHT :
         case X : 
         case Y :
         case ELEVATION : 
           return 50;
+        case VOLUME :
+          return 85;
         case ANGLE :
           return 35;        
         case LEVEL :
@@ -1215,6 +1217,8 @@ public class FurnitureTable extends JTable implements View, Printable {
           return getSizeRenderer(HomePieceOfFurniture.SortableProperty.DEPTH, preferences);
         case HEIGHT : 
           return getSizeRenderer(HomePieceOfFurniture.SortableProperty.HEIGHT, preferences);
+        case VOLUME :
+          return getSizeRenderer(HomePieceOfFurniture.SortableProperty.VOLUME, preferences);
         case X : 
           return getSizeRenderer(HomePieceOfFurniture.SortableProperty.X, preferences);
         case Y :
@@ -1338,6 +1342,16 @@ public class FurnitureTable extends JTable implements View, Printable {
                   Object value, boolean isSelected, boolean hasFocus, int row, int column) {
                 return super.getTableCellRendererComponent(table, 
                     value != null  ? ((HomePieceOfFurniture)value).getHeight()  : null, 
+                    isSelected, hasFocus, row, column);
+              }
+            };
+        case VOLUME :
+          return new SizeRenderer() {
+              @Override
+              public Component getTableCellRendererComponent(JTable table,
+                  Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+                return super.getTableCellRendererComponent(table,
+                    value != null  ? ((HomePieceOfFurniture)value).getVolume()  : null,
                     isSelected, hasFocus, row, column);
               }
             };

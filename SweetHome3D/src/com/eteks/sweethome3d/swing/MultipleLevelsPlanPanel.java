@@ -662,7 +662,21 @@ public class MultipleLevelsPlanPanel extends JPanel implements PlanView, Printab
    * Prints the plan component.
    */
   public int print(Graphics graphics, PageFormat pageFormat, int pageIndex) throws PrinterException {
-    return this.planComponent.print(graphics, pageFormat, pageIndex);
+    if (EventQueue.isDispatchThread()) {
+      return this.planComponent.print(graphics, pageFormat, pageIndex);
+    }
+    // Selecting a level temporarily also updates the Swing level tabs.
+    int [] result = new int[1];
+    try {
+      EventQueue.invokeAndWait(() -> result[0] = this.planComponent.print(graphics, pageFormat, pageIndex));
+      return result[0];
+    } catch (InterruptedException ex) {
+      throw new InterruptedPrinterException("Print interrupted");
+    } catch (InvocationTargetException ex) {
+      PrinterException printException = new PrinterException("Couldn't print plan");
+      printException.initCause(ex.getCause());
+      throw printException;
+    }
   }
 
   /**
